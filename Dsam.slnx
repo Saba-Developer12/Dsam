@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Dsam.App/Dsam.App.csproj" />
+    <Project Path="src/Dsam.Core/Dsam.Core.csproj" />
+    <Project Path="src/Dsam.Data/Dsam.Data.csproj" />
+  </Folder>
+</Solution>

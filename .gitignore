@@ -1,0 +1,7 @@
+bin/
+obj/
+*.user
+*.suo
+*.dsam.idb
+*.dsam.idb-shm
+*.dsam.idb-wal
