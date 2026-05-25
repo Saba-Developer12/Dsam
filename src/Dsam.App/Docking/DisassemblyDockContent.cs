@@ -37,8 +37,15 @@ public sealed class DisassemblyDockContent : DockContent
             FillWeight = 55
         });
         _grid.DataSource = _bindingSource;
-        _grid.CellFormatting += (_, e) => e.CellStyle.Font = new Font("Consolas", 9F);
+        _grid.CellFormatting += (_, e) =>
+        {
+            e.CellStyle.Font = new Font("Consolas", 9F);
+        };
         _grid.SelectionChanged += (_, _) => RaiseCurrentInstructionChanged();
+        _grid.EnableHeadersVisualStyles = false;
+        _grid.ColumnHeadersDefaultCellStyle.BackColor = DsamColors.Header;
+        _grid.ColumnHeadersDefaultCellStyle.ForeColor = DsamColors.Text;
+        _grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
         Controls.Add(_grid);
     }
 

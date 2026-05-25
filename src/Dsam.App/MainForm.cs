@@ -39,6 +39,7 @@ public sealed class MainForm : Form
         BackColor = DsamColors.Window;
 
         Controls.Add(CreateDockPanel());
+
         Controls.Add(CreateStatusStrip());
         Controls.Add(CreateMenu());
 
@@ -53,7 +54,8 @@ public sealed class MainForm : Form
         var menu = new MenuStrip
         {
             BackColor = DsamColors.Header,
-            ForeColor = DsamColors.Text
+            ForeColor = DsamColors.Text,
+            Renderer = new ToolStripProfessionalRenderer(new DsamColorTable())
         };
 
         var fileMenu = new ToolStripMenuItem("&File");
@@ -68,6 +70,7 @@ public sealed class MainForm : Form
         viewMenu.DropDownItems.Add("Registers", null, (_, _) => ShowContent(_registersView, DockState.DockRight));
         viewMenu.DropDownItems.Add("Segments", null, (_, _) => ShowContent(_sectionsView, DockState.DockLeft));
         viewMenu.DropDownItems.Add("Xrefs", null, (_, _) => ShowContent(_xrefsView, DockState.DockRight));
+
 
         menu.Items.Add(fileMenu);
         menu.Items.Add(viewMenu);

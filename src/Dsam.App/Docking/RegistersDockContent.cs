@@ -22,20 +22,33 @@ public sealed class RegistersDockContent : DockContent
 
         _listView = new ListView
         {
-            BackColor = DsamColors.Grid,
             BorderStyle = BorderStyle.None,
             Dock = DockStyle.Fill,
             Font = new Font("Consolas", 9F),
-            ForeColor = DsamColors.Text,
             FullRowSelect = true,
             HeaderStyle = ColumnHeaderStyle.Nonclickable,
             View = View.Details
         };
         _listView.Columns.Add("Register", 80);
         _listView.Columns.Add("Value", 170);
+        _listView.BackColor = DsamColors.Grid;
+        _listView.ForeColor = DsamColors.Text;
+        _listView.HeaderStyle = ColumnHeaderStyle.None;
         Controls.Add(_listView);
 
-        Reset();
+        var header = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 25,
+            BackColor = DsamColors.Header
+        };
+        header.Paint += (sender, e) =>
+        {
+            using var brush = new SolidBrush(DsamColors.Text);
+            e.Graphics.DrawString("Register", Font, brush, new PointF(5, 5));
+            e.Graphics.DrawString("Value", Font, brush, new PointF(85, 5));
+        };
+        Controls.Add(header);
     }
 
     public void Reset()

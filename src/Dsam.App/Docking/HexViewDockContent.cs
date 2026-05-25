@@ -1,4 +1,5 @@
-using System.Text;
+using System.Drawing;
+using Be.Windows.Forms;
 using Dsam.App.Ui;
 using WeifenLuo.WinFormsUI.Docking;
 
@@ -6,7 +7,7 @@ namespace Dsam.App.Docking;
 
 public sealed class HexViewDockContent : DockContent
 {
-    private readonly TextBox _textBox;
+    private readonly HexBox _hexBox;
 
     public HexViewDockContent()
     {
@@ -14,46 +15,33 @@ public sealed class HexViewDockContent : DockContent
         TabText = "Hex View";
         HideOnClose = true;
 
-        _textBox = new TextBox
+        _hexBox = new HexBox
         {
-            BackColor = DsamColors.Grid,
-            BorderStyle = BorderStyle.None,
             Dock = DockStyle.Fill,
-            Font = new Font("Consolas", 9F),
+            Font = new Font("Consolas", 9.75F),
+            LineInfoVisible = true,
+            StringViewVisible = true,
+            UseFixedBytesPerLine = true,
+            VScrollBarVisible = true,
+            BytesPerLine = 16,
+
+            // Dark theme colors
+            BackColor = DsamColors.Grid,
             ForeColor = DsamColors.Text,
-            Multiline = true,
-            ReadOnly = true,
-            ScrollBars = ScrollBars.Both,
-            WordWrap = false
+            InfoForeColor = DsamColors.MutedText,
+            SelectionBackColor = DsamColors.Accent,
+            SelectionForeColor = Color.White,
+            ShadowSelectionColor = Color.FromArgb(100, 60, 188, 255)
         };
-        Controls.Add(_textBox);
+        Controls.Add(_hexBox);
     }
 
     public void SetBytes(ulong baseAddress, byte[] bytes)
     {
-        var builder = new StringBuilder(bytes.Length * 4);
-        for (var offset = 0; offset < bytes.Length; offset += 16)
-        {
-            var count = Math.Min(16, bytes.Length - offset);
-            builder.Append($"0x{baseAddress + (ulong)offset:X16}  ");
-
-            for (var i = 0; i < 16; i++)
-            {
-                builder.Append(i < count ? $"{bytes[offset + i]:X2} " : "   ");
-            }
-
-            builder.Append(" ");
-            for (var i = 0; i < count; i++)
-            {
-                var value = bytes[offset + i];
-                builder.Append(value is >= 32 and <= 126 ? (char)value : '.');
-            }
-
-            builder.AppendLine();
-        }
-
-        _textBox.Text = builder.ToString();
+        var provider = new DynamicByteProvider(bytes ?? Array.Empty<byte>());
+        _hexBox.ByteProvider = provider;
+        _hexBox.LineInfoOffset = (long)baseAddress;
     }
 
-    public void Clear() => _textBox.Clear();
+    public void Clear() => _hexBox.ByteProvider = null;
 }

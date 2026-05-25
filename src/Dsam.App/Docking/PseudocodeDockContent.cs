@@ -15,17 +15,16 @@ public sealed class PseudocodeDockContent : DockContent
 
         _textBox = new TextBox
         {
-            BackColor = DsamColors.Grid,
-            BorderStyle = BorderStyle.None,
             Dock = DockStyle.Fill,
             Font = new Font("Consolas", 9F),
-            ForeColor = DsamColors.Text,
             Multiline = true,
             ReadOnly = true,
             ScrollBars = ScrollBars.Both,
             WordWrap = false
         };
 
+        _textBox.BackColor = DsamColors.Grid;
+        _textBox.ForeColor = DsamColors.Text;
         Controls.Add(_textBox);
         SetText("// Open a binary to generate C# pseudocode.");
     }
