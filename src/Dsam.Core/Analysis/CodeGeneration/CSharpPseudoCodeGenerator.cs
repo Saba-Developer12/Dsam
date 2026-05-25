@@ -15,6 +15,7 @@ public sealed class CSharpPseudoCodeGenerator
     {
         var builder = new StringBuilder();
         var entryMethodName = FormatFunctionName(function.EntryAddress);
+        var localVariables = FindLocalVariables(function);
 
         builder.AppendLine("// Dsam decompiler pseudocode.");
         builder.AppendLine("// Generated as valid C#-shaped code for editor readability.");
@@ -24,11 +25,9 @@ public sealed class CSharpPseudoCodeGenerator
         builder.AppendLine("{");
         builder.AppendLine("    public static class DecompiledProgram");
         builder.AppendLine("    {");
-        builder.AppendLine($"        public static ulong {entryMethodName}()");
+        builder.AppendLine($"        public static void {entryMethodName}()");
         builder.AppendLine("        {");
-        builder.AppendLine("            var cpu = new CpuState();");
-        builder.AppendLine("            IMemory memory = new NullMemory();");
-        builder.AppendLine($"            return {FormatBlockMethodName(function.EntryAddress)}(cpu, memory);");
+        builder.AppendLine($"            {FormatBlockMethodName(function.EntryAddress)}();");
         builder.AppendLine("        }");
         builder.AppendLine();
 
@@ -37,10 +36,65 @@ public sealed class CSharpPseudoCodeGenerator
             AppendBlockMethod(builder, block);
         }
 
-        AppendHelpers(builder);
+        AppendHelpers(builder, localVariables);
         builder.AppendLine("    }");
         builder.AppendLine("}");
         return builder.ToString();
+    }
+
+    private static HashSet<string> FindLocalVariables(IrFunction function)
+    {
+        var locals = new HashSet<string>();
+
+        void Collect(IrExpression? expr)
+        {
+            if (expr is null) return;
+
+            if (expr is IrMemoryAddress memAddr && memAddr.Base?.Name == "rbp" && memAddr.Displacement < 0)
+            {
+                locals.Add(FormatAddress(memAddr));
+            }
+            else if (expr is IrBinaryExpression binary)
+            {
+                Collect(binary.Left);
+                Collect(binary.Right);
+            }
+        }
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var statement in block.Statements)
+            {
+                switch (statement)
+                {
+                    case IrAssign assign:
+                        Collect(assign.Destination);
+                        Collect(assign.Source);
+                        break;
+                    case IrStore store:
+                        Collect(store.Address);
+                        Collect(store.Value);
+                        break;
+                    case IrCompare compare:
+                        Collect(compare.Left);
+                        Collect(compare.Right);
+                        break;
+                    case IrCall call:
+                        Collect(call.Destination);
+                        Collect(call.Target);
+                        break;
+                }
+            }
+            if (block.Terminator is IrIndirectBranch indirect)
+            {
+                Collect(indirect.Target);
+            }
+            else if (block.Terminator is IrReturn ret && ret.Value is not null)
+            {
+                Collect(ret.Value);
+            }
+        }
+        return locals;
     }
 
     private static void AppendAnalysisComments(
@@ -66,12 +120,15 @@ public sealed class CSharpPseudoCodeGenerator
 
     private static void AppendBlockMethod(StringBuilder builder, IrBasicBlock block)
     {
-        builder.AppendLine($"        private static ulong {FormatBlockMethodName(block.SourceAddress)}(CpuState cpu, IMemory memory)");
+        builder.AppendLine($"        private static void {FormatBlockMethodName(block.SourceAddress)}()");
         builder.AppendLine("        {");
-
         foreach (var statement in block.Statements)
         {
-            builder.AppendLine($"            {FormatStatement(statement)}");
+            var formatted = FormatStatement(statement);
+            if (!string.IsNullOrEmpty(formatted))
+            {
+                builder.AppendLine($"            {formatted}");
+            }
         }
 
         if (block.Terminator is not null)
@@ -81,27 +138,24 @@ public sealed class CSharpPseudoCodeGenerator
                 builder.AppendLine($"            {line}");
             }
         }
-        else
-        {
-            builder.AppendLine("            return cpu.Rax;");
-        }
+        // No explicit return needed anymore as control flow is handled by block calls.
 
         builder.AppendLine("        }");
         builder.AppendLine();
     }
 
-    private static string FormatStatement(IrStatement statement) =>
+    private static string? FormatStatement(IrStatement statement) =>
         statement switch
         {
-            IrAssemblyComment comment => $"// 0x{comment.Address:X16}: {comment.Text}",
+            IrAssemblyComment => null,
+            IrComment => null,
             IrAssign assign => FormatAssign(assign),
             IrStore store => store.SizeInBytes == 8
-                ? $"memory.Write64({FormatAddress(store.Address)}, {FormatExpression(store.Value)});"
-                : $"// TODO: write {store.SizeInBytes} bytes to {FormatAddress(store.Address)} = {FormatExpression(store.Value)};",
+                ? $"Memory.Write64({FormatAddress(store.Address)}, {FormatExpression(store.Value)});"
+                : null, // Ignore writes of other sizes for now
             IrCall call => FormatCall(call),
             IrCompare compare => FormatCompare(compare),
-            IrComment comment => $"// 0x{comment.Address:X16}: {comment.Text}",
-            _ => $"// TODO: unsupported IR statement: {statement.GetType().Name}"
+            _ => null // Ignore unsupported statements
         };
 
     private static IEnumerable<string> FormatTerminator(IrTerminator terminator)
@@ -109,54 +163,77 @@ public sealed class CSharpPseudoCodeGenerator
         switch (terminator)
         {
             case IrBranch branch:
-                yield return $"return {SanitizeBlockMethodName(branch.TargetBlock)}(cpu, memory);";
+                yield return $"{SanitizeBlockMethodName(branch.TargetBlock)}();";
                 break;
-
             case IrConditionalBranch branch:
                 yield return $"if ({FormatFlagCondition(branch.Condition)})";
                 yield return "{";
-                yield return $"    return {SanitizeBlockMethodName(branch.TrueTargetBlock)}(cpu, memory);";
+                yield return $"    {SanitizeBlockMethodName(branch.TrueTargetBlock)}();";
                 yield return "}";
-                yield return $"return {SanitizeBlockMethodName(branch.FalseTargetBlock)}(cpu, memory);";
+                yield return "else";
+                yield return "{";
+                yield return $"    {SanitizeBlockMethodName(branch.FalseTargetBlock)}();";
+                yield return "}";
                 break;
 
             case IrIndirectBranch branch:
                 yield return $"// TODO: indirect branch target {FormatExpression(branch.Target)}";
-                yield return "return cpu.Rax;";
+                yield return "return;";
                 break;
 
             case IrReturn { Value: null }:
-                yield return "return cpu.Rax;";
+                yield return "return;";
                 break;
 
             case IrReturn { Value: { } value }:
-                yield return $"return {FormatExpression(value)};";
+                yield return $"rax = {FormatExpression(value)};";
+                yield return "return;";
                 break;
 
             case IrUnresolvedTerminator unresolved:
                 yield return $"// TODO: unresolved terminator: {EscapeComment(unresolved.Reason)}";
-                yield return "return cpu.Rax;";
+                yield return "return;";
                 break;
 
             default:
                 yield return $"// TODO: unsupported terminator: {terminator.GetType().Name}";
-                yield return "return cpu.Rax;";
+                yield return "return;";
                 break;
         }
     }
 
-    private static string FormatAssign(IrAssign assign) =>
-        assign.Destination is IrMemoryAddress address
-            ? $"memory.Write64({FormatAddress(address)}, {FormatExpression(assign.Source)});"
-            : $"{FormatExpression(assign.Destination)} = {FormatExpression(assign.Source)};";
+    private static string FormatAssign(IrAssign assign)
+    {
+        var sourceExpression = FormatExpression(assign.Source);
+
+        if (assign.Destination is IrRegister destRegister)
+        {
+            return $"{FormatRegister(destRegister.Name)} = {sourceExpression};";
+        }
+
+        if (assign.Destination is IrMemoryAddress destAddress)
+        {
+            // Check for stack variables (e.g., [rbp - 8])
+            if (destAddress.Base?.Name == "rbp" && destAddress.Displacement < 0)
+            {
+                return $"{FormatAddress(destAddress)} = {sourceExpression};";
+            }
+            
+            // Handle other memory writes
+            return $"Memory.Write64({FormatAddress(destAddress)}, {sourceExpression});";
+        }
+
+        // Fallback for other destination types
+        return $"{FormatExpression(assign.Destination)} = {sourceExpression};";
+    }
 
     private static string FormatCall(IrCall call)
     {
-        var callExpression = $"Cpu.Call({FormatExpression(call.Target)})";
+        var callExpression = $"Call({FormatExpression(call.Target)})";
         return call.Destination switch
         {
             null => $"{callExpression};",
-            IrMemoryAddress address => $"memory.Write64({FormatAddress(address)}, {callExpression});",
+            IrMemoryAddress address => $"Memory.Write64({FormatAddress(address)}, {callExpression});",
             _ => $"{FormatExpression(call.Destination)} = {callExpression};"
         };
     }
@@ -168,7 +245,8 @@ public sealed class CSharpPseudoCodeGenerator
             IrTemporary temporary => FormatIdentifier(temporary.Name),
             IrConstant constant => $"0x{constant.Value:X}UL",
             IrBinaryExpression binary => $"({FormatExpression(binary.Left)} {binary.Operation} {FormatExpression(binary.Right)})",
-            IrMemoryAddress address => $"memory.Read64({FormatAddress(address)})",
+            IrMemoryAddress address when address.Base?.Name == "rbp" => FormatAddress(address),
+            IrMemoryAddress address => $"Memory.Read64({FormatAddress(address)})",
             _ => "0UL"
         };
 
@@ -176,9 +254,7 @@ public sealed class CSharpPseudoCodeGenerator
     {
         var left = FormatExpression(compare.Left);
         var right = FormatExpression(compare.Right);
-        return compare.Operation == "test"
-            ? $"cpu.Flags.Equal = ({left} == {right}); cpu.Flags.NotEqual = !cpu.Flags.Equal;"
-            : $"cpu.Flags.Equal = ({left} == {right}); cpu.Flags.NotEqual = !cpu.Flags.Equal;";
+        return $"equal = ({left} == {right}); not_equal = !equal;";
     }
 
     private static string FormatAddress(IrExpression expression) =>
@@ -188,6 +264,12 @@ public sealed class CSharpPseudoCodeGenerator
 
     private static string FormatAddress(IrMemoryAddress address)
     {
+        // Check for stack variables (e.g., [rbp - 8])
+        if (address.Base?.Name == "rbp" && address.Index is null && address.Displacement < 0)
+        {
+            return $"local_{Math.Abs(address.Displacement):X}";
+        }
+
         if (address.AbsoluteAddress is not null)
         {
             return $"0x{address.AbsoluteAddress.Value:X16}UL";
@@ -202,7 +284,7 @@ public sealed class CSharpPseudoCodeGenerator
         if (address.Index is not null)
         {
             var index = FormatRegister(address.Index.Name);
-            parts.Add(address.Scale == 1 ? index : $"{index} * {address.Scale}UL");
+            parts.Add(address.Scale == 1 ? index : $"({index} * {address.Scale}UL)");
         }
 
         if (address.Displacement != 0)
@@ -218,44 +300,21 @@ public sealed class CSharpPseudoCodeGenerator
     private static string FormatFlagCondition(string condition) =>
         condition switch
         {
-            "eq" => "cpu.Flags.Equal",
-            "ne" => "cpu.Flags.NotEqual",
-            "gt" => "cpu.Flags.Greater",
-            "ge" => "cpu.Flags.GreaterOrEqual",
-            "lt" => "cpu.Flags.Less",
-            "le" => "cpu.Flags.LessOrEqual",
-            "ugt" => "cpu.Flags.UnsignedGreater",
-            "uge" => "cpu.Flags.UnsignedGreaterOrEqual",
-            "ult" => "cpu.Flags.UnsignedLess",
-            "ule" => "cpu.Flags.UnsignedLessOrEqual",
-            "sign" => "cpu.Flags.Sign",
-            "not_sign" => "!cpu.Flags.Sign",
-            "parity" => "cpu.Flags.Parity",
-            "not_parity" => "!cpu.Flags.Parity",
-            _ => "cpu.Flags.Unknown"
+            "eq" => "equal",
+            "ne" => "not_equal",
+            "gt" => "greater",
+            "ge" => "greater || equal",
+            "lt" => "less",
+            "le" => "less || equal",
+            "sign" => "sign",
+            "not_sign" => "!sign",
+            "parity" => "parity",
+            "not_parity" => "!parity",
+            _ => "false // unknown flag"
         };
 
     private static string FormatRegister(string registerName) =>
-        registerName.ToLowerInvariant() switch
-        {
-            "rax" or "eax" or "ax" or "al" => "cpu.Rax",
-            "rbx" or "ebx" or "bx" or "bl" => "cpu.Rbx",
-            "rcx" or "ecx" or "cx" or "cl" => "cpu.Rcx",
-            "rdx" or "edx" or "dx" or "dl" => "cpu.Rdx",
-            "rsi" or "esi" or "si" or "sil" => "cpu.Rsi",
-            "rdi" or "edi" or "di" or "dil" => "cpu.Rdi",
-            "rbp" or "ebp" or "bp" or "bpl" => "cpu.BasePointer",
-            "rsp" or "esp" or "sp" or "spl" => "cpu.StackPointer",
-            "r8" or "r8d" or "r8w" or "r8b" => "cpu.R8",
-            "r9" or "r9d" or "r9w" or "r9b" => "cpu.R9",
-            "r10" or "r10d" or "r10w" or "r10b" => "cpu.R10",
-            "r11" or "r11d" or "r11w" or "r11b" => "cpu.R11",
-            "r12" or "r12d" or "r12w" or "r12b" => "cpu.R12",
-            "r13" or "r13d" or "r13w" or "r13b" => "cpu.R13",
-            "r14" or "r14d" or "r14w" or "r14b" => "cpu.R14",
-            "r15" or "r15d" or "r15w" or "r15b" => "cpu.R15",
-            _ => $"cpu.{FormatIdentifier(registerName)}"
-        };
+        FormatIdentifier(registerName.ToLowerInvariant());
 
     private static string FormatFunctionName(ulong address) => $"Sub_{address:X16}";
 
@@ -265,6 +324,8 @@ public sealed class CSharpPseudoCodeGenerator
         blockName.StartsWith("loc_", StringComparison.OrdinalIgnoreCase)
             ? $"Block_{blockName[4..]}"
             : FormatIdentifier(blockName);
+
+
 
     private static string FormatIdentifier(string value)
     {
@@ -289,63 +350,29 @@ public sealed class CSharpPseudoCodeGenerator
     private static string EscapeComment(string value) =>
         value.Replace("\r", " ", StringComparison.Ordinal).Replace("\n", " ", StringComparison.Ordinal);
 
-    private static void AppendHelpers(StringBuilder builder)
+    private static void AppendHelpers(StringBuilder builder, HashSet<string> localVariables)
     {
-        builder.AppendLine("        private sealed class CpuState");
+        builder.AppendLine("        // Registers");
+        builder.AppendLine("        private static ulong rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp;");
+        builder.AppendLine("        private static ulong r8, r9, r10, r11, r12, r13, r14, r15;");
+        builder.AppendLine();
+
+        if (localVariables.Count > 0)
+        {
+            builder.AppendLine("        // Local variables");
+            builder.AppendLine($"        private static ulong {string.Join(", ", localVariables)};");
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("        // Flags");
+        builder.AppendLine("        private static bool equal, not_equal, greater, less, sign, parity;");
+        builder.AppendLine();
+        builder.AppendLine("        private static class Memory");
         builder.AppendLine("        {");
-        builder.AppendLine("            public ulong Rax;");
-        builder.AppendLine("            public ulong Rbx;");
-        builder.AppendLine("            public ulong Rcx;");
-        builder.AppendLine("            public ulong Rdx;");
-        builder.AppendLine("            public ulong Rsi;");
-        builder.AppendLine("            public ulong Rdi;");
-        builder.AppendLine("            public ulong BasePointer;");
-        builder.AppendLine("            public ulong StackPointer;");
-        builder.AppendLine("            public ulong R8;");
-        builder.AppendLine("            public ulong R9;");
-        builder.AppendLine("            public ulong R10;");
-        builder.AppendLine("            public ulong R11;");
-        builder.AppendLine("            public ulong R12;");
-        builder.AppendLine("            public ulong R13;");
-        builder.AppendLine("            public ulong R14;");
-        builder.AppendLine("            public ulong R15;");
-        builder.AppendLine("            public CpuFlags Flags = new CpuFlags();");
+        builder.AppendLine("            public static ulong Read64(ulong address) => 0UL; // Placeholder");
+        builder.AppendLine("            public static void Write64(ulong address, ulong value) { } // Placeholder");
         builder.AppendLine("        }");
         builder.AppendLine();
-        builder.AppendLine("        private sealed class CpuFlags");
-        builder.AppendLine("        {");
-        builder.AppendLine("            public bool Equal;");
-        builder.AppendLine("            public bool NotEqual;");
-        builder.AppendLine("            public bool Greater;");
-        builder.AppendLine("            public bool GreaterOrEqual;");
-        builder.AppendLine("            public bool Less;");
-        builder.AppendLine("            public bool LessOrEqual;");
-        builder.AppendLine("            public bool UnsignedGreater;");
-        builder.AppendLine("            public bool UnsignedGreaterOrEqual;");
-        builder.AppendLine("            public bool UnsignedLess;");
-        builder.AppendLine("            public bool UnsignedLessOrEqual;");
-        builder.AppendLine("            public bool Sign;");
-        builder.AppendLine("            public bool Parity;");
-        builder.AppendLine("            public bool Unknown;");
-        builder.AppendLine("        }");
-        builder.AppendLine();
-        builder.AppendLine("        private interface IMemory");
-        builder.AppendLine("        {");
-        builder.AppendLine("            ulong Read64(ulong address);");
-        builder.AppendLine("            void Write64(ulong address, ulong value);");
-        builder.AppendLine("        }");
-        builder.AppendLine();
-        builder.AppendLine("        private sealed class NullMemory : IMemory");
-        builder.AppendLine("        {");
-        builder.AppendLine("            public ulong Read64(ulong address) => 0UL;");
-        builder.AppendLine("            public void Write64(ulong address, ulong value)");
-        builder.AppendLine("            {");
-        builder.AppendLine("            }");
-        builder.AppendLine("        }");
-        builder.AppendLine();
-        builder.AppendLine("        private static class Cpu");
-        builder.AppendLine("        {");
-        builder.AppendLine("            public static ulong Call(ulong address) => 0UL;");
-        builder.AppendLine("        }");
+        builder.AppendLine("        private static ulong Call(ulong address) => 0UL; // Placeholder");
     }
 }
