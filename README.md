@@ -1,6 +1,6 @@
 # Dsam - A .NET 9 Disassembler & Decompiler
 
-![Dsam Screenshot 1](screenshots/1.png)
+![Dsam Screenshot 1](screenshot/1.png)
 
 Dsam is a high-performance, cross-platform PE (Portable Executable) disassembler and decompiler written in C# and .NET 9. Designed for low-level system analysis, code flow visualization, and binary patching with custom control flow analysis.
 
