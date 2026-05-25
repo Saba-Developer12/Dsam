@@ -24,10 +24,10 @@ Dsam is a high-performance, cross-platform PE (Portable Executable) disassembler
 Here's a glimpse of Dsam in action:
 
 **Main Disassembly View:**
-![Dsam Screenshot 1](screenshots/1.png)
+![Dsam Screenshot 1](screenshot/1.png)
 
 **Pseudocode and Hex View:**
-![Dsam Screenshot 2](screenshots/2.png)
+![Dsam Screenshot 2](screenshot/2.png)
 
 ## Getting Started
 
